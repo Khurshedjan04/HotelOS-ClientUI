@@ -54,23 +54,9 @@ function StripeCardForm({ booking, payment, onPaid }: { booking: BookingResponse
         payment_method: { card },
       });
       if (error) {
-        // If the publishable key is wrong/missing, fall back to direct confirmation
-        // so testing still works without a fully wired Stripe account.
-        if (error.message?.toLowerCase().includes("api key") ||
-            error.type === "invalid_request_error") {
-          toast.success("Processing payment…");
-          try { await bookingsApi.confirm(booking.id); } catch { /* already confirmed */ }
-          updateStatus(booking.id, "Confirmed");
-          toast.success("Booking confirmed!");
-          onPaid();
-        } else {
-          toast.error(error.message ?? "Payment failed. Please try again.");
-        }
+        toast.error(error.message ?? "Payment failed. Please try again.");
       } else if (paymentIntent?.status === "succeeded") {
         toast.success("Payment successful! Confirming your booking…");
-        // Directly confirm the booking — fallback for when the Stripe webhook
-        // secret is not yet wired up, so the webhook doesn't fire automatically.
-        try { await bookingsApi.confirm(booking.id); } catch { /* webhook already confirmed */ }
         pollConfirmation(booking.id);
       }
     } catch (err: unknown) {
@@ -112,72 +98,21 @@ function StripeCardForm({ booking, payment, onPaid }: { booking: BookingResponse
   );
 }
 
-/* ── Dev/fallback mock form ───────────────────────────────────── */
-function MockCardForm({ booking, onPaid }: { booking: BookingResponse; onPaid: () => void }) {
-  const updateStatus = useBookingStore((s) => s.updateStatus);
-  const [paying, setPaying] = useState(false);
-  const [card, setCard] = useState({ number: "", expiry: "", cvc: "", name: "" });
-
-  const handlePay = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setPaying(true);
-    try {
-      await bookingsApi.confirm(booking.id);
-      updateStatus(booking.id, "Confirmed");
-      toast.success("Payment confirmed! Booking is now active.");
-      onPaid();
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Payment failed");
-    } finally {
-      setPaying(false);
-    }
-  };
-
+/* ── Payment unavailable — shown when no clientSecret returned ── */
+function PaymentUnavailable() {
   return (
-    <form onSubmit={handlePay} className="px-6 py-5 space-y-4">
-      <div className="px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 mb-1">
-        Test mode — enter any card details to simulate payment
+    <div className="px-6 py-8 text-center space-y-3">
+      <div className="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center mx-auto">
+        <svg className="w-6 h-6 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+            d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+        </svg>
       </div>
-      <div>
-        <label>Cardholder Name</label>
-        <input placeholder="Jane Smith" value={card.name}
-          onChange={(e) => setCard((c) => ({ ...c, name: e.target.value }))} required />
-      </div>
-      <div>
-        <label>Card Number</label>
-        <input placeholder="4242 4242 4242 4242" maxLength={19}
-          value={card.number}
-          onChange={(e) => {
-            const v = e.target.value.replace(/\D/g, "").slice(0, 16);
-            setCard((c) => ({ ...c, number: v.replace(/(.{4})/g, "$1 ").trim() }));
-          }} required />
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label>Expiry</label>
-          <input placeholder="MM/YY" maxLength={5} value={card.expiry}
-            onChange={(e) => {
-              const v = e.target.value.replace(/\D/g, "").slice(0, 4);
-              const f = v.length > 2 ? `${v.slice(0, 2)}/${v.slice(2)}` : v;
-              setCard((c) => ({ ...c, expiry: f }));
-            }} required />
-        </div>
-        <div>
-          <label>CVC</label>
-          <input placeholder="123" maxLength={4} value={card.cvc}
-            onChange={(e) => setCard((c) => ({ ...c, cvc: e.target.value.replace(/\D/g, "").slice(0, 4) }))}
-            required />
-        </div>
-      </div>
-
-      <SecureBadge />
-
-      <button type="submit" disabled={paying}
-        className="w-full py-3 bg-amber-600 hover:bg-amber-700 disabled:opacity-60 text-white
-                   font-semibold rounded-xl transition-colors flex items-center justify-center gap-2 text-sm">
-        {paying ? <><Spin /> Processing…</> : `Pay $${booking.totalPrice.toFixed(2)}`}
-      </button>
-    </form>
+      <p className="font-semibold text-stone-800">Payment not available</p>
+      <p className="text-sm text-stone-500">
+        Stripe is not configured. Contact support to complete your booking.
+      </p>
+    </div>
   );
 }
 
@@ -221,7 +156,7 @@ export default function PaymentModal({ booking, onClose, onPaid }: Props) {
       <StripeCardForm booking={booking} payment={payment} onPaid={onPaid} />
     </Elements>
   ) : (
-    <MockCardForm booking={booking} onPaid={onPaid} />
+    <PaymentUnavailable />
   );
 
   return (
