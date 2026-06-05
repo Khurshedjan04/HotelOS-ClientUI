@@ -6,13 +6,14 @@ import { useRoomStore } from "@/store/roomStore";
 import { useBookingStore } from "@/store/bookingStore";
 import { connect, joinChannel } from "@/lib/signalr";
 
+const POLL_INTERVAL_MS = 20_000;
+
 export default function Providers({ children }: { children: React.ReactNode }) {
-  const hydrate          = useAuthStore((s) => s.hydrate);
-  const user             = useAuthStore((s) => s.user);
-  const updateRoom       = useRoomStore((s) => s.updateRoomStatus);
-  const updateStatus     = useBookingStore((s) => s.updateStatus);
-  const fetchMyBookings  = useBookingStore((s) => s.fetchMyBookings);
-  const connRef          = useRef<import("@microsoft/signalr").HubConnection | null>(null);
+  const hydrate         = useAuthStore((s) => s.hydrate);
+  const user            = useAuthStore((s) => s.user);
+  const updateRoom      = useRoomStore((s) => s.updateRoomStatus);
+  const updateStatus    = useBookingStore((s) => s.updateStatus);
+  const fetchMyBookings = useBookingStore((s) => s.fetchMyBookings);
 
   useEffect(() => { hydrate(); }, [hydrate]);
 
@@ -20,16 +21,26 @@ export default function Providers({ children }: { children: React.ReactNode }) {
     if (!user) return;
     let mounted = true;
 
-    const setup = async () => {
+    // ── Polling fallback ───────────────────────────────────────
+    const pollTimer = setInterval(() => {
+      fetchMyBookings(user.id);
+    }, POLL_INTERVAL_MS);
+
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        fetchMyBookings(user.id);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
+    // ── SignalR ────────────────────────────────────────────────
+    const setup = async (attempt = 0) => {
+      if (!mounted) return;
       try {
         const c = await connect();
         if (!mounted) return;
-        connRef.current = c;
 
-        // "rooms" — live room availability updates for all guests
         await joinChannel("rooms");
-        // personal channel — Hub auto-joins user:{id} via OnConnectedAsync from JWT,
-        // but we explicitly join to ensure it's registered even after reconnect.
         await joinChannel(`user:${user.id}`);
 
         c.on("RoomStatusUpdated", (d: { RoomId?: string; roomId?: string; NewStatus?: string; newStatus?: string }) => {
@@ -58,19 +69,27 @@ export default function Providers({ children }: { children: React.ReactNode }) {
           if (bid && st) updateStatus(bid, st);
         });
 
-      } catch { /* SignalR unavailable — degrade gracefully */ }
+        c.onreconnected(async () => {
+          // Re-join channels — SignalR drops group membership on reconnect
+          await joinChannel("rooms").catch(() => {});
+          await joinChannel(`user:${user.id}`).catch(() => {});
+          fetchMyBookings(user.id);
+        });
+
+      } catch {
+        if (mounted && attempt < 5) {
+          const delay = Math.min(2000 * 2 ** attempt, 30_000);
+          setTimeout(() => setup(attempt + 1), delay);
+        }
+      }
     };
 
     setup();
 
     return () => {
       mounted = false;
-      const c = connRef.current;
-      c?.off("RoomStatusUpdated");
-      c?.off("ReservationCreated");
-      c?.off("ReservationExpired");
-      c?.off("PaymentConfirmed");
-      c?.off("BookingStatusUpdated");
+      clearInterval(pollTimer);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [user, updateRoom, updateStatus, fetchMyBookings]);
 
