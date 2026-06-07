@@ -45,12 +45,9 @@ export const useRoomStore = create<State>((set, get) => ({
 
   updateRoomStatus: (roomId, newStatus) =>
     set((s) => ({
-      results: s.results.map((r) =>
-        r.id === roomId ? { ...r, status: newStatus } : r
-      ).filter((r) => newStatus === "Available" || r.id !== roomId
-        ? true
-        : newStatus !== "Reserved" && newStatus !== "Available"
-          ? false : true
-      ),
+      // Only Available rooms are shown; remove any room that becomes unavailable.
+      results: newStatus === "Available"
+        ? s.results.map((r) => r.id === roomId ? { ...r, status: newStatus } : r)
+        : s.results.filter((r) => r.id !== roomId),
     })),
 }));

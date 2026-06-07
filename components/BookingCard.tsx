@@ -27,19 +27,38 @@ export default function BookingCard({ booking }: { booking: BookingResponse }) {
     (new Date(booking.checkOut).getTime() - new Date(booking.checkIn).getTime()) / 86_400_000
   ));
 
+  const cancelPenaltyMessage = () => {
+    if (booking.status === "PendingPayment")
+      return "Your reservation will be released. No charge.";
+    const hoursUntilCheckIn = (new Date(booking.checkIn).getTime() - Date.now()) / 3_600_000;
+    if (hoursUntilCheckIn > 48) return "You will receive a full refund.";
+    if (hoursUntilCheckIn > 24) return "A standard cancellation fee applies — partial refund only.";
+    return "No refund — check-in is less than 24 hours away.";
+  };
+
   const handleCancel = async () => {
-    if (!confirm("Cancel this booking? Cancellation penalties may apply.")) return;
+    if (!confirm(`Cancel this booking?\n\n${cancelPenaltyMessage()}`)) return;
     setCancelling(true);
     try {
       const updated = await bookingsApi.cancel(booking.id);
       upsert(updated);
-      toast.success("Booking cancelled");
+      const penaltyLabel =
+        updated.penaltyType === "FullRefund"       ? "Full refund will be issued." :
+        updated.penaltyType === "StandardPenalty"  ? "Partial refund will be processed." :
+        updated.penaltyType === "NoRefund"         ? "No refund applies." : "";
+      toast.success(`Booking cancelled. ${penaltyLabel}`);
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Cancel failed");
     } finally { setCancelling(false); }
   };
 
   const st = STATUS_STYLES[booking.status] ?? "bg-stone-100 text-stone-500";
+
+  const penaltyBadge = booking.status === "Cancelled" ? (
+    booking.penaltyType === "FullRefund"      ? <span className="text-xs text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">Refund issued</span> :
+    booking.penaltyType === "StandardPenalty" ? <span className="text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">Partial refund</span> :
+    booking.penaltyType === "NoRefund"        ? <span className="text-xs text-red-600 bg-red-50 px-2 py-0.5 rounded-full">No refund</span> : null
+  ) : null;
 
   return (
     <>
@@ -50,6 +69,7 @@ export default function BookingCard({ booking }: { booking: BookingResponse }) {
             <p className="text-sm text-stone-500 mt-0.5">
               {format(new Date(booking.checkIn), "MMM d")} — {format(new Date(booking.checkOut), "MMM d, yyyy")} · {nights} night{nights !== 1 ? "s" : ""}
             </p>
+            {penaltyBadge && <div className="mt-1">{penaltyBadge}</div>}
           </div>
           <span className={`shrink-0 text-xs font-medium px-2.5 py-1 rounded-full ${st}`}>
             {booking.status}

@@ -23,26 +23,6 @@ function StripeCardForm({ booking, payment, onPaid }: { booking: BookingResponse
   const updateStatus = useBookingStore((s) => s.updateStatus);
   const [paying, setPaying] = useState(false);
 
-  const pollConfirmation = (bookingId: string) => {
-    let attempts = 0;
-    const poll = setInterval(async () => {
-      attempts++;
-      try {
-        const b = await bookingsApi.getById(bookingId);
-        if (b.status === "Confirmed") {
-          clearInterval(poll);
-          updateStatus(bookingId, "Confirmed");
-          toast.success("Booking confirmed!");
-          onPaid();
-        } else if (attempts >= 10) {
-          clearInterval(poll);
-          toast("Booking will update shortly.");
-          onPaid();
-        }
-      } catch { clearInterval(poll); onPaid(); }
-    }, 2000);
-  };
-
   const handlePay = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!stripe || !elements || !payment.clientSecret) return;
@@ -56,8 +36,15 @@ function StripeCardForm({ booking, payment, onPaid }: { booking: BookingResponse
       if (error) {
         toast.error(error.message ?? "Payment failed. Please try again.");
       } else if (paymentIntent?.status === "succeeded") {
-        toast.success("Payment successful! Confirming your booking…");
-        pollConfirmation(booking.id);
+        // Confirm the booking directly — this updates the DB and fires BookingStatusUpdated
+        // via SignalR, so both this guest's view and the staff dashboard update immediately.
+        // If the Stripe webhook also fires later, it hits a 409 (already confirmed) and is ignored.
+        try {
+          await bookingsApi.confirm(booking.id);
+        } catch { /* 409 = already confirmed by webhook, fine */ }
+        updateStatus(booking.id, "Confirmed");
+        toast.success("Payment successful! Booking confirmed.");
+        onPaid();
       }
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Payment failed");

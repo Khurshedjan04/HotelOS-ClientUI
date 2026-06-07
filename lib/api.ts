@@ -44,6 +44,7 @@ export interface BookingResponse {
   id: string; guestId: string; roomId: string; roomNumber: string;
   checkIn: string; checkOut: string; effectiveCheckout: string;
   status: string; totalPrice: number; expiresAt: string; createdAt: string;
+  penaltyType: string;
 }
 
 export interface PaymentResponse {
